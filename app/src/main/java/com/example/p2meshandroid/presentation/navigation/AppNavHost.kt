@@ -11,6 +11,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.p2meshandroid.presentation.home.HomeScreen
 import com.example.p2meshandroid.presentation.mesh.MeshScreen
 import com.example.p2meshandroid.presentation.scan.ScanScreen
+import com.example.p2meshandroid.presentation.settlement.SettlementScreen
 import com.example.p2meshandroid.presentation.settings.SettingsScreen
 import com.example.p2meshandroid.presentation.wallet.WalletViewModel
 import com.example.p2meshandroid.ui.theme.DarkBackground
@@ -43,6 +44,10 @@ fun AppNavHost(
 
             composable(Route.Scan.route) {
                 ScanScreen(walletViewModel = walletViewModel)
+            }
+
+            composable(Route.Settlement.route) {
+                SettlementScreen()
             }
 
             composable(Route.Settings.route) {

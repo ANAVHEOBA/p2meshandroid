@@ -32,6 +32,9 @@ class WalletViewModel(
     private val _receiveState = MutableStateFlow<ReceivePaymentState>(ReceivePaymentState.Idle)
     val receiveState: StateFlow<ReceivePaymentState> = _receiveState.asStateFlow()
 
+    private val _transactions = MutableStateFlow<List<TransactionItem>>(emptyList())
+    val transactions: StateFlow<List<TransactionItem>> = _transactions.asStateFlow()
+
     init {
         loadOrCreateWallet()
     }
@@ -92,13 +95,28 @@ class WalletViewModel(
 
             val result = sendPaymentUseCase(recipientDid, amount)
             _sendState.value = result.fold(
-                onSuccess = {
+                onSuccess = { payment ->
+                    // Add to transaction history
+                    addTransaction(
+                        TransactionItem(
+                            id = payment.id,
+                            type = TransactionType.SENT,
+                            amount = payment.amount,
+                            counterparty = payment.recipient,
+                            timestamp = System.currentTimeMillis(),
+                            status = TransactionStatus.COMPLETED
+                        )
+                    )
                     refreshWallet()
-                    SendPaymentState.Success(it.id, it.amount)
+                    SendPaymentState.Success(payment.id, payment.amount)
                 },
                 onFailure = { SendPaymentState.Error(it.message ?: "Payment failed") }
             )
         }
+    }
+
+    private fun addTransaction(transaction: TransactionItem) {
+        _transactions.value = listOf(transaction) + _transactions.value
     }
 
     fun resetSendState() {
@@ -116,6 +134,17 @@ class WalletViewModel(
         viewModelScope.launch {
             val result = fundFromFaucetUseCase(amount)
             result.onSuccess { walletInfo ->
+                // Add to transaction history
+                addTransaction(
+                    TransactionItem(
+                        id = "faucet_${System.currentTimeMillis()}",
+                        type = TransactionType.RECEIVED,
+                        amount = amount,
+                        counterparty = "Faucet",
+                        timestamp = System.currentTimeMillis(),
+                        status = TransactionStatus.COMPLETED
+                    )
+                )
                 _uiState.value = WalletUiState.Success(walletInfo)
             }
             result.onFailure { error ->
@@ -140,6 +169,17 @@ class WalletViewModel(
                 val result = receivePaymentUseCase(paymentBytes)
                 _receiveState.value = result.fold(
                     onSuccess = {
+                        // Add to transaction history
+                        addTransaction(
+                            TransactionItem(
+                                id = "recv_${System.currentTimeMillis()}",
+                                type = TransactionType.RECEIVED,
+                                amount = 0UL, // Amount unknown without parsing IOU
+                                counterparty = "Unknown",
+                                timestamp = System.currentTimeMillis(),
+                                status = TransactionStatus.COMPLETED
+                            )
+                        )
                         refreshWallet()
                         ReceivePaymentState.Success
                     },
@@ -170,6 +210,17 @@ class WalletViewModel(
                 val result = receivePaymentUseCase.withSenderKey(paymentBytes, senderPubKey)
                 _receiveState.value = result.fold(
                     onSuccess = {
+                        // Add to transaction history
+                        addTransaction(
+                            TransactionItem(
+                                id = "recv_${System.currentTimeMillis()}",
+                                type = TransactionType.RECEIVED,
+                                amount = 0UL,
+                                counterparty = "Unknown",
+                                timestamp = System.currentTimeMillis(),
+                                status = TransactionStatus.COMPLETED
+                            )
+                        )
                         refreshWallet()
                         ReceivePaymentState.Success
                     },
@@ -213,4 +264,48 @@ sealed class ReceivePaymentState {
     object Processing : ReceivePaymentState()
     object Success : ReceivePaymentState()
     data class Error(val message: String) : ReceivePaymentState()
+}
+
+/**
+ * Transaction type
+ */
+enum class TransactionType {
+    SENT,
+    RECEIVED
+}
+
+/**
+ * Transaction status
+ */
+enum class TransactionStatus {
+    PENDING,
+    COMPLETED,
+    FAILED
+}
+
+/**
+ * Transaction item for history display
+ */
+data class TransactionItem(
+    val id: String,
+    val type: TransactionType,
+    val amount: ULong,
+    val counterparty: String,
+    val timestamp: Long,
+    val status: TransactionStatus
+) {
+    val shortCounterparty: String
+        get() = if (counterparty.length > 20) "${counterparty.take(10)}...${counterparty.takeLast(6)}" else counterparty
+
+    val formattedTime: String
+        get() {
+            val now = System.currentTimeMillis()
+            val diff = now - timestamp
+            return when {
+                diff < 60_000 -> "Just now"
+                diff < 3600_000 -> "${diff / 60_000}m ago"
+                diff < 86400_000 -> "${diff / 3600_000}h ago"
+                else -> "${diff / 86400_000}d ago"
+            }
+        }
 }

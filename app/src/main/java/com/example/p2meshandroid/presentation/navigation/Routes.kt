@@ -35,6 +35,13 @@ sealed class Route(
         unselectedIcon = Icons.Outlined.QrCodeScanner
     )
 
+    object Settlement : Route(
+        route = "settlement",
+        title = "Settle",
+        selectedIcon = Icons.Filled.AccountBalance,
+        unselectedIcon = Icons.Outlined.AccountBalance
+    )
+
     object Settings : Route(
         route = "settings",
         title = "Settings",
@@ -43,6 +50,6 @@ sealed class Route(
     )
 
     companion object {
-        val bottomNavItems = listOf(Home, Mesh, Scan, Settings)
+        val bottomNavItems = listOf(Home, Mesh, Scan, Settlement, Settings)
     }
 }

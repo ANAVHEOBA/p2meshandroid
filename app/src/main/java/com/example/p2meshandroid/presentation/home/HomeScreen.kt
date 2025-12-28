@@ -27,6 +27,9 @@ import com.example.p2meshandroid.data.repository.WalletInfo
 import com.example.p2meshandroid.presentation.wallet.WalletViewModel
 import com.example.p2meshandroid.presentation.wallet.WalletUiState
 import com.example.p2meshandroid.presentation.wallet.SendPaymentState
+import com.example.p2meshandroid.presentation.wallet.TransactionItem
+import com.example.p2meshandroid.presentation.wallet.TransactionType
+import com.example.p2meshandroid.presentation.wallet.TransactionStatus
 import com.example.p2meshandroid.ui.theme.*
 
 @Composable
@@ -36,6 +39,7 @@ fun HomeScreen(
 ) {
     val uiState by walletViewModel.uiState.collectAsState()
     val sendState by walletViewModel.sendState.collectAsState()
+    val transactions by walletViewModel.transactions.collectAsState()
     var showSendDialog by remember { mutableStateOf(false) }
     var showFundDialog by remember { mutableStateOf(false) }
 
@@ -59,6 +63,7 @@ fun HomeScreen(
             is WalletUiState.Success -> {
                 HomeContent(
                     walletInfo = state.walletInfo,
+                    transactions = transactions,
                     onSendClick = { showSendDialog = true },
                     onReceiveClick = { /* Navigate to Scan */ },
                     onFundClick = { showFundDialog = true },
@@ -164,6 +169,7 @@ private fun ErrorScreen(
 @Composable
 private fun HomeContent(
     walletInfo: WalletInfo,
+    transactions: List<TransactionItem>,
     onSendClick: () -> Unit,
     onReceiveClick: () -> Unit,
     onFundClick: () -> Unit,
@@ -206,18 +212,40 @@ private fun HomeContent(
 
         // Recent Activity Header
         item {
-            Text(
-                text = "Recent Activity",
-                style = MaterialTheme.typography.titleMedium,
-                color = TextPrimary,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Recent Activity",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (transactions.isNotEmpty()) {
+                    Text(
+                        text = "${transactions.size} transactions",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMuted
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        // Empty state for transactions
-        item {
-            EmptyTransactionsCard()
+        // Transactions or Empty state
+        if (transactions.isEmpty()) {
+            item {
+                EmptyTransactionsCard()
+            }
+        } else {
+            items(transactions.take(10).size) { index ->
+                TransactionCard(transaction = transactions[index])
+                if (index < transactions.size - 1) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
         }
     }
 }
@@ -511,6 +539,77 @@ private fun EmptyTransactionsCard() {
                 style = MaterialTheme.typography.bodySmall,
                 color = TextMuted
             )
+        }
+    }
+}
+
+@Composable
+private fun TransactionCard(transaction: TransactionItem) {
+    val isSent = transaction.type == TransactionType.SENT
+    val icon = if (isSent) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward
+    val iconColor = if (isSent) ErrorRed else SuccessGreen
+    val amountPrefix = if (isSent) "-" else "+"
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurface)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Icon
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(iconColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Details
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (isSent) "Sent" else "Received",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = transaction.shortCounterparty,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Amount and time
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "$amountPrefix${transaction.amount}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = iconColor,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = transaction.formattedTime,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextMuted
+                )
+            }
         }
     }
 }

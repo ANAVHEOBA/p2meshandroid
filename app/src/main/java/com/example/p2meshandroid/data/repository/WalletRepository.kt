@@ -213,6 +213,14 @@ class WalletRepository(
     fun hasStoredWallet(): Boolean = storage?.hasWallet() ?: false
 
     /**
+     * Get native wallet for use with other components (Mesh, Collector, etc.)
+     */
+    fun getNativeWallet(): Result<Wallet> {
+        return currentWallet?.let { Result.success(it) }
+            ?: Result.failure(IllegalStateException("No wallet loaded"))
+    }
+
+    /**
      * Clear wallet from memory and storage
      */
     suspend fun clearWallet() = withContext(Dispatchers.IO) {

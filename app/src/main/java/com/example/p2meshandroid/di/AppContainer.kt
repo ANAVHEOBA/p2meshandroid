@@ -2,10 +2,12 @@ package com.example.p2meshandroid.di
 
 import android.content.Context
 import com.example.p2meshandroid.data.repository.MeshRepository
+import com.example.p2meshandroid.data.repository.SettlementRepository
 import com.example.p2meshandroid.data.repository.WalletRepository
 import com.example.p2meshandroid.data.storage.WalletStorage
 import com.example.p2meshandroid.domain.usecase.*
 import com.example.p2meshandroid.presentation.mesh.MeshViewModel
+import com.example.p2meshandroid.presentation.settlement.SettlementViewModel
 import com.example.p2meshandroid.presentation.wallet.WalletViewModel
 
 /**
@@ -33,6 +35,10 @@ object AppContainer {
 
     val meshRepository: MeshRepository by lazy {
         MeshRepository(walletRepository)
+    }
+
+    val settlementRepository: SettlementRepository by lazy {
+        SettlementRepository(walletRepository)
     }
 
     // Use Cases
@@ -101,6 +107,35 @@ object AppContainer {
         SyncWithPeerUseCase(meshRepository)
     }
 
+    // Settlement Use Cases
+    val initializeSettlementUseCase: InitializeSettlementUseCase by lazy {
+        InitializeSettlementUseCase(settlementRepository)
+    }
+
+    val collectIousUseCase: CollectIousUseCase by lazy {
+        CollectIousUseCase(settlementRepository)
+    }
+
+    val createSettlementBatchUseCase: CreateSettlementBatchUseCase by lazy {
+        CreateSettlementBatchUseCase(settlementRepository)
+    }
+
+    val submitSettlementBatchUseCase: SubmitSettlementBatchUseCase by lazy {
+        SubmitSettlementBatchUseCase(settlementRepository)
+    }
+
+    val getSettlementStatsUseCase: GetSettlementStatsUseCase by lazy {
+        GetSettlementStatsUseCase(settlementRepository)
+    }
+
+    val simulateSettlementUseCase: SimulateSettlementUseCase by lazy {
+        SimulateSettlementUseCase(settlementRepository)
+    }
+
+    val clearSettlementDataUseCase: ClearSettlementDataUseCase by lazy {
+        ClearSettlementDataUseCase(settlementRepository)
+    }
+
     // ViewModel Factories
     fun provideWalletViewModel(): WalletViewModel {
         return WalletViewModel(
@@ -126,6 +161,19 @@ object AppContainer {
             syncWithPeerUseCase = syncWithPeerUseCase
         )
     }
+
+    fun provideSettlementViewModel(): SettlementViewModel {
+        return SettlementViewModel(
+            walletRepository = walletRepository,
+            initializeSettlementUseCase = initializeSettlementUseCase,
+            collectIousUseCase = collectIousUseCase,
+            createSettlementBatchUseCase = createSettlementBatchUseCase,
+            submitSettlementBatchUseCase = submitSettlementBatchUseCase,
+            getSettlementStatsUseCase = getSettlementStatsUseCase,
+            simulateSettlementUseCase = simulateSettlementUseCase,
+            clearSettlementDataUseCase = clearSettlementDataUseCase
+        )
+    }
 }
 
 /**
@@ -146,6 +194,16 @@ class MeshViewModelFactory : androidx.lifecycle.ViewModelProvider.Factory {
     override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(MeshViewModel::class.java)) {
             return AppContainer.provideMeshViewModel() as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+class SettlementViewModelFactory : androidx.lifecycle.ViewModelProvider.Factory {
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(SettlementViewModel::class.java)) {
+            return AppContainer.provideSettlementViewModel() as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }
