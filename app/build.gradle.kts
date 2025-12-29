@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    kotlin("plugin.serialization") version "2.0.21"
 }
 
 android {
@@ -57,6 +58,9 @@ dependencies {
 
     // Security for encrypted storage
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Kotlinx Serialization for JSON
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     // QR Code generation (ZXing)
     implementation("com.google.zxing:core:3.5.3")

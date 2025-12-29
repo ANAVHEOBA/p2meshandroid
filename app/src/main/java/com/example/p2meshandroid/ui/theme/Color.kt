@@ -37,6 +37,7 @@ val TextMuted = Color(0xFF6B6B80)
 val SuccessGreen = Color(0xFF22C55E)
 val ErrorRed = Color(0xFFEF4444)
 val WarningYellow = Color(0xFFF59E0B)
+val WarningOrange = Color(0xFFFF9500)
 
 // Card/Surface overlays
 val CardOverlay = Color(0x1A8B5CF6)

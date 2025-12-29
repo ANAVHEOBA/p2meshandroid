@@ -25,6 +25,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.p2meshandroid.data.repository.WalletInfo
+import com.example.p2meshandroid.data.storage.QueuedPayment
+import com.example.p2meshandroid.data.storage.QueuedPaymentStatus
 import com.example.p2meshandroid.ui.theme.*
 
 @Composable
@@ -34,6 +36,9 @@ fun WalletScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val sendState by viewModel.sendState.collectAsState()
+    val queuedPayments by viewModel.queuedPayments.collectAsState()
+    val queueStats by viewModel.queueStats.collectAsState()
+    val isProcessingQueue by viewModel.isProcessingQueue.collectAsState()
     var showSendDialog by remember { mutableStateOf(false) }
 
     Box(
@@ -56,10 +61,16 @@ fun WalletScreen(
             is WalletUiState.Success -> {
                 HomeContent(
                     walletInfo = state.walletInfo,
+                    queuedPayments = queuedPayments,
+                    queueStats = queueStats,
+                    isProcessingQueue = isProcessingQueue,
                     onSendClick = { showSendDialog = true },
                     onReceiveClick = { /* TODO */ },
                     onScanClick = { /* TODO */ },
-                    onRefresh = { viewModel.refreshWallet() }
+                    onRefresh = { viewModel.refreshWallet() },
+                    onProcessQueue = { viewModel.processQueue() },
+                    onRetryPayment = { viewModel.retryQueuedPayment(it) },
+                    onCancelPayment = { viewModel.cancelQueuedPayment(it) }
                 )
             }
         }
@@ -153,10 +164,16 @@ private fun ErrorScreen(
 @Composable
 private fun HomeContent(
     walletInfo: WalletInfo,
+    queuedPayments: List<QueuedPayment>,
+    queueStats: com.example.p2meshandroid.data.storage.QueueStats,
+    isProcessingQueue: Boolean,
     onSendClick: () -> Unit,
     onReceiveClick: () -> Unit,
     onScanClick: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onProcessQueue: () -> Unit,
+    onRetryPayment: (String) -> Unit,
+    onCancelPayment: (String) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -185,6 +202,21 @@ private fun HomeContent(
                 onRefresh = onRefresh
             )
             Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        // Payment Queue Section (only show if there are queued payments)
+        if (queuedPayments.isNotEmpty()) {
+            item {
+                PaymentQueueSection(
+                    queuedPayments = queuedPayments,
+                    queueStats = queueStats,
+                    isProcessing = isProcessingQueue,
+                    onProcessQueue = onProcessQueue,
+                    onRetryPayment = onRetryPayment,
+                    onCancelPayment = onCancelPayment
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+            }
         }
 
         // Wallet Details Section
@@ -510,6 +542,203 @@ private fun EmptyTransactionsCard() {
 }
 
 @Composable
+private fun PaymentQueueSection(
+    queuedPayments: List<QueuedPayment>,
+    queueStats: com.example.p2meshandroid.data.storage.QueueStats,
+    isProcessing: Boolean,
+    onProcessQueue: () -> Unit,
+    onRetryPayment: (String) -> Unit,
+    onCancelPayment: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header with process button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.Schedule,
+                        contentDescription = null,
+                        tint = WarningOrange,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Pending Payments",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (isProcessing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = PrimaryPurple
+                    )
+                } else {
+                    TextButton(onClick = onProcessQueue) {
+                        Text(
+                            text = "Send All",
+                            color = PrimaryPurple,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Stats row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceAround
+            ) {
+                QueueStatItem(label = "Pending", value = "${queueStats.pendingCount}")
+                QueueStatItem(label = "Failed", value = "${queueStats.failedCount}")
+                QueueStatItem(label = "Total", value = "${queueStats.totalAmount} credits")
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = DarkSurfaceVariant)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Queued payment items
+            queuedPayments.take(5).forEach { payment ->
+                QueuedPaymentItem(
+                    payment = payment,
+                    onRetry = { onRetryPayment(payment.id) },
+                    onCancel = { onCancelPayment(payment.id) }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            if (queuedPayments.size > 5) {
+                Text(
+                    text = "+${queuedPayments.size - 5} more payments",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueStatItem(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            color = TextPrimary,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary
+        )
+    }
+}
+
+@Composable
+private fun QueuedPaymentItem(
+    payment: QueuedPayment,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(DarkSurfaceVariant)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Status indicator
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when (payment.status) {
+                                QueuedPaymentStatus.PENDING -> WarningOrange
+                                QueuedPaymentStatus.SENDING -> PrimaryPurple
+                                QueuedPaymentStatus.FAILED -> ErrorRed
+                                QueuedPaymentStatus.COMPLETED -> SuccessGreen
+                            }
+                        )
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${payment.amount} credits",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "To: ${payment.recipientDid.take(20)}...",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (payment.lastError != null) {
+                Text(
+                    text = payment.lastError,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ErrorRed,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // Action buttons
+        Row {
+            if (payment.status == QueuedPaymentStatus.FAILED) {
+                IconButton(
+                    onClick = onRetry,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = "Retry",
+                        tint = PrimaryPurple,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            IconButton(
+                onClick = onCancel,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Cancel",
+                    tint = ErrorRed,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SendPaymentDialog(
     sendState: SendPaymentState,
     onSend: (String, ULong) -> Unit,
@@ -588,6 +817,33 @@ private fun SendPaymentDialog(
                             )
                         }
                     }
+                    is SendPaymentState.Queued -> {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Outlined.Schedule,
+                                contentDescription = null,
+                                tint = WarningOrange,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Payment queued",
+                                color = WarningOrange,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "No peers connected. The payment will be sent automatically when connectivity is restored.",
+                                color = TextSecondary,
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Amount: ${sendState.amount} credits",
+                                color = TextSecondary
+                            )
+                        }
+                    }
                     is SendPaymentState.Error -> {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
@@ -623,7 +879,7 @@ private fun SendPaymentDialog(
                         Text("Send")
                     }
                 }
-                is SendPaymentState.Success, is SendPaymentState.Error -> {
+                is SendPaymentState.Success, is SendPaymentState.Queued, is SendPaymentState.Error -> {
                     Button(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple)

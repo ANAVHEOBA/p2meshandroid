@@ -687,6 +687,26 @@ private fun SendPaymentDialog(
                             Text(text = "Amount: ${sendState.amount} credits", color = TextSecondary)
                         }
                     }
+                    is SendPaymentState.Queued -> {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Outlined.Schedule,
+                                contentDescription = null,
+                                tint = WarningOrange,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(text = "Payment queued", color = WarningOrange, fontWeight = FontWeight.Medium)
+                            Text(
+                                text = "Will be sent when connectivity is restored",
+                                color = TextSecondary,
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(text = "Amount: ${sendState.amount} credits", color = TextSecondary)
+                        }
+                    }
                     is SendPaymentState.Error -> {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
@@ -718,7 +738,7 @@ private fun SendPaymentDialog(
                         Text("Send")
                     }
                 }
-                is SendPaymentState.Success, is SendPaymentState.Error -> {
+                is SendPaymentState.Success, is SendPaymentState.Queued, is SendPaymentState.Error -> {
                     Button(
                         onClick = onDismiss,
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple)

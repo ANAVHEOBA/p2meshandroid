@@ -1,5 +1,6 @@
 package com.example.p2meshandroid.data.repository
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.p2pmesh_bridge.*
@@ -195,6 +196,55 @@ class MeshRepository(
     }
 
     fun isMeshInitialized(): Boolean = meshNode != null
+
+    /**
+     * Broadcast current mesh state to all connected peers
+     * Used after creating a payment to propagate it through the network
+     */
+    suspend fun broadcastPayment(iou: SignedIou): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val node = meshNode ?: throw IllegalStateException("Mesh node not initialized")
+            val t = transport ?: throw IllegalStateException("Transport not started")
+
+            // Get current state (which should include the payment after it's marked as sent)
+            val state = node.getState()
+
+            // Send to all connected peers
+            val peers = t.connectedPeers()
+            var sentCount = 0
+
+            for (peer in peers) {
+                try {
+                    t.send(peer.address, state)
+                    sentCount++
+                    Log.d(TAG, "Broadcast state to ${peer.address}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to send to ${peer.address}: ${e.message}")
+                }
+            }
+
+            if (sentCount == 0 && peers.isNotEmpty()) {
+                throw Exception("Failed to send to any peers")
+            }
+
+            sentCount
+        }
+    }
+
+    /**
+     * Check if we have any connected peers
+     */
+    fun hasConnectedPeers(): Boolean {
+        return try {
+            transport?.peerCount()?.let { it > 0UL } ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    companion object {
+        private const val TAG = "MeshRepository"
+    }
 }
 
 data class MergeStats(

@@ -2,7 +2,11 @@ package com.example.p2meshandroid.presentation.wallet
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.p2meshandroid.data.repository.MeshRepository
 import com.example.p2meshandroid.data.repository.WalletInfo
+import com.example.p2meshandroid.data.storage.QueueStats
+import com.example.p2meshandroid.data.storage.QueuedPayment
+import com.example.p2meshandroid.data.storage.QueuedPaymentStatus
 import com.example.p2meshandroid.domain.usecase.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +24,17 @@ class WalletViewModel(
     private val receivePaymentUseCase: ReceivePaymentUseCase,
     private val getPendingPaymentsUseCase: GetPendingPaymentsUseCase,
     private val backupWalletUseCase: BackupWalletUseCase,
-    private val fundFromFaucetUseCase: FundFromFaucetUseCase
+    private val fundFromFaucetUseCase: FundFromFaucetUseCase,
+    private val restoreWalletUseCase: RestoreWalletUseCase? = null,
+    // Payment Queue use cases
+    private val queuePaymentUseCase: QueuePaymentUseCase? = null,
+    private val processPaymentQueueUseCase: ProcessPaymentQueueUseCase? = null,
+    private val getQueuedPaymentsUseCase: GetQueuedPaymentsUseCase? = null,
+    private val getQueueStatsUseCase: GetQueueStatsUseCase? = null,
+    private val retryQueuedPaymentUseCase: RetryQueuedPaymentUseCase? = null,
+    private val cancelQueuedPaymentUseCase: CancelQueuedPaymentUseCase? = null,
+    private val getQueueProcessingStateUseCase: GetQueueProcessingStateUseCase? = null,
+    private val meshRepository: MeshRepository? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<WalletUiState>(WalletUiState.Loading)
@@ -32,11 +46,72 @@ class WalletViewModel(
     private val _receiveState = MutableStateFlow<ReceivePaymentState>(ReceivePaymentState.Idle)
     val receiveState: StateFlow<ReceivePaymentState> = _receiveState.asStateFlow()
 
+    private val _restoreState = MutableStateFlow<RestoreState>(RestoreState.Idle)
+    val restoreState: StateFlow<RestoreState> = _restoreState.asStateFlow()
+
     private val _transactions = MutableStateFlow<List<TransactionItem>>(emptyList())
     val transactions: StateFlow<List<TransactionItem>> = _transactions.asStateFlow()
 
+    // Payment Queue state
+    private val _queuedPayments = MutableStateFlow<List<QueuedPayment>>(emptyList())
+    val queuedPayments: StateFlow<List<QueuedPayment>> = _queuedPayments.asStateFlow()
+
+    private val _queueStats = MutableStateFlow(QueueStats(0, 0, 0, 0, 0UL))
+    val queueStats: StateFlow<QueueStats> = _queueStats.asStateFlow()
+
+    private val _isProcessingQueue = MutableStateFlow(false)
+    val isProcessingQueue: StateFlow<Boolean> = _isProcessingQueue.asStateFlow()
+
     init {
         loadOrCreateWallet()
+        observeQueueState()
+        startQueueAutoProcess()
+    }
+
+    private fun startQueueAutoProcess() {
+        // Auto-process queued payments when connectivity is detected
+        viewModelScope.launch {
+            // Monitor connectivity and process queue when peers are available
+            while (true) {
+                kotlinx.coroutines.delay(5000)
+                val hasConnectivity = meshRepository?.hasConnectedPeers() ?: false
+                val hasPending = _queuedPayments.value.any {
+                    it.status == QueuedPaymentStatus.PENDING
+                }
+                if (hasConnectivity && hasPending && !_isProcessingQueue.value) {
+                    processQueue()
+                }
+            }
+        }
+    }
+
+    private fun observeQueueState() {
+        // Observe queued payments
+        getQueuedPaymentsUseCase?.invoke()?.let { flow ->
+            viewModelScope.launch {
+                flow.collect { payments ->
+                    _queuedPayments.value = payments
+                }
+            }
+        }
+
+        // Observe queue stats
+        getQueueStatsUseCase?.invoke()?.let { flow ->
+            viewModelScope.launch {
+                flow.collect { stats ->
+                    _queueStats.value = stats
+                }
+            }
+        }
+
+        // Observe processing state
+        getQueueProcessingStateUseCase?.invoke()?.let { flow ->
+            viewModelScope.launch {
+                flow.collect { isProcessing ->
+                    _isProcessingQueue.value = isProcessing
+                }
+            }
+        }
     }
 
     private fun loadOrCreateWallet() {
@@ -93,25 +168,132 @@ class WalletViewModel(
         viewModelScope.launch {
             _sendState.value = SendPaymentState.Sending
 
-            val result = sendPaymentUseCase(recipientDid, amount)
+            // Check if we have mesh connectivity
+            val hasConnectivity = meshRepository?.hasConnectedPeers() ?: false
+
+            if (!hasConnectivity && queuePaymentUseCase != null) {
+                // No connectivity - queue the payment for later
+                val queueResult = queuePaymentUseCase.invoke(recipientDid, amount)
+                _sendState.value = queueResult.fold(
+                    onSuccess = { queuedPayment ->
+                        addTransaction(
+                            TransactionItem(
+                                id = queuedPayment.id,
+                                type = TransactionType.SENT,
+                                amount = amount,
+                                counterparty = recipientDid,
+                                timestamp = System.currentTimeMillis(),
+                                status = TransactionStatus.PENDING
+                            )
+                        )
+                        SendPaymentState.Queued(queuedPayment.id, amount)
+                    },
+                    onFailure = { SendPaymentState.Error(it.message ?: "Failed to queue payment") }
+                )
+            } else {
+                // Has connectivity - send immediately
+                val result = sendPaymentUseCase(recipientDid, amount)
+                _sendState.value = result.fold(
+                    onSuccess = { payment ->
+                        // Add to transaction history
+                        addTransaction(
+                            TransactionItem(
+                                id = payment.id,
+                                type = TransactionType.SENT,
+                                amount = payment.amount,
+                                counterparty = payment.recipient,
+                                timestamp = System.currentTimeMillis(),
+                                status = TransactionStatus.COMPLETED
+                            )
+                        )
+                        refreshWallet()
+                        SendPaymentState.Success(payment.id, payment.amount)
+                    },
+                    onFailure = { SendPaymentState.Error(it.message ?: "Payment failed") }
+                )
+            }
+        }
+    }
+
+    /**
+     * Queue a payment for later delivery (explicit queue action)
+     */
+    fun queuePayment(recipientDid: String, amount: ULong) {
+        viewModelScope.launch {
+            _sendState.value = SendPaymentState.Sending
+
+            val result = queuePaymentUseCase?.invoke(recipientDid, amount)
+                ?: Result.failure(Exception("Queue not available"))
+
             _sendState.value = result.fold(
-                onSuccess = { payment ->
-                    // Add to transaction history
+                onSuccess = { queuedPayment ->
                     addTransaction(
                         TransactionItem(
-                            id = payment.id,
+                            id = queuedPayment.id,
                             type = TransactionType.SENT,
-                            amount = payment.amount,
-                            counterparty = payment.recipient,
+                            amount = amount,
+                            counterparty = recipientDid,
                             timestamp = System.currentTimeMillis(),
-                            status = TransactionStatus.COMPLETED
+                            status = TransactionStatus.PENDING
                         )
                     )
-                    refreshWallet()
-                    SendPaymentState.Success(payment.id, payment.amount)
+                    SendPaymentState.Queued(queuedPayment.id, amount)
                 },
-                onFailure = { SendPaymentState.Error(it.message ?: "Payment failed") }
+                onFailure = { SendPaymentState.Error(it.message ?: "Failed to queue payment") }
             )
+        }
+    }
+
+    /**
+     * Process all queued payments
+     */
+    fun processQueue() {
+        viewModelScope.launch {
+            processPaymentQueueUseCase?.invoke()?.onSuccess { count ->
+                if (count > 0) {
+                    refreshWallet()
+                    // Update transaction statuses
+                    updateQueuedTransactionStatuses()
+                }
+            }
+        }
+    }
+
+    /**
+     * Retry a specific failed payment
+     */
+    fun retryQueuedPayment(paymentId: String) {
+        viewModelScope.launch {
+            retryQueuedPaymentUseCase?.invoke(paymentId)
+            // Trigger queue processing
+            processQueue()
+        }
+    }
+
+    /**
+     * Cancel a queued payment
+     */
+    fun cancelQueuedPayment(paymentId: String) {
+        viewModelScope.launch {
+            cancelQueuedPaymentUseCase?.invoke(paymentId)
+            // Update transaction in history
+            _transactions.value = _transactions.value.map { tx ->
+                if (tx.id == paymentId) tx.copy(status = TransactionStatus.FAILED)
+                else tx
+            }
+        }
+    }
+
+    private fun updateQueuedTransactionStatuses() {
+        val queuedIds = _queuedPayments.value
+            .filter { it.status == QueuedPaymentStatus.COMPLETED }
+            .map { it.id }
+            .toSet()
+
+        _transactions.value = _transactions.value.map { tx ->
+            if (tx.id in queuedIds && tx.status == TransactionStatus.PENDING) {
+                tx.copy(status = TransactionStatus.COMPLETED)
+            } else tx
         }
     }
 
@@ -235,6 +417,44 @@ class WalletViewModel(
     fun resetReceiveState() {
         _receiveState.value = ReceivePaymentState.Idle
     }
+
+    /**
+     * Restore wallet from hex-encoded secret key
+     */
+    fun restoreWallet(secretKeyHex: String) {
+        viewModelScope.launch {
+            _restoreState.value = RestoreState.Restoring
+
+            try {
+                // Convert hex string to bytes
+                val secretKeyBytes = secretKeyHex.trim()
+                    .chunked(2)
+                    .map { it.toInt(16).toByte() }
+                    .toByteArray()
+
+                val result = restoreWalletUseCase?.invoke(secretKeyBytes)
+                    ?: Result.failure(Exception("Restore not available"))
+
+                result.fold(
+                    onSuccess = { walletInfo ->
+                        _uiState.value = WalletUiState.Success(walletInfo)
+                        _restoreState.value = RestoreState.Success
+                        // Clear transaction history for restored wallet
+                        _transactions.value = emptyList()
+                    },
+                    onFailure = { error ->
+                        _restoreState.value = RestoreState.Error(error.message ?: "Restore failed")
+                    }
+                )
+            } catch (e: Exception) {
+                _restoreState.value = RestoreState.Error("Invalid secret key format: ${e.message}")
+            }
+        }
+    }
+
+    fun resetRestoreState() {
+        _restoreState.value = RestoreState.Idle
+    }
 }
 
 /**
@@ -253,6 +473,7 @@ sealed class SendPaymentState {
     object Idle : SendPaymentState()
     object Sending : SendPaymentState()
     data class Success(val paymentId: String, val amount: ULong) : SendPaymentState()
+    data class Queued(val paymentId: String, val amount: ULong) : SendPaymentState()
     data class Error(val message: String) : SendPaymentState()
 }
 
@@ -264,6 +485,16 @@ sealed class ReceivePaymentState {
     object Processing : ReceivePaymentState()
     object Success : ReceivePaymentState()
     data class Error(val message: String) : ReceivePaymentState()
+}
+
+/**
+ * State for wallet restore operation
+ */
+sealed class RestoreState {
+    object Idle : RestoreState()
+    object Restoring : RestoreState()
+    object Success : RestoreState()
+    data class Error(val message: String) : RestoreState()
 }
 
 /**
